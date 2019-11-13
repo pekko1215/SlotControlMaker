@@ -5,6 +5,7 @@ const SlotControlMaker = {
         constructor(bet1, bet2, bet3) {
             this.modes = [];
             this.betLines = [bet1, bet2, bet3];
+            this.displayRange = [3, 3, 3];
         }
         addMode(mode) {
             this.modes.push(mode);
@@ -24,9 +25,131 @@ const SlotControlMaker = {
         setSpecialSymbols(specialSymbols) {
             this.specialSymbols = specialSymbols;
         }
+        setControls(controls) {
+            this.controls = controls;
+        }
+        generate() {
+            //評価値式を採用する
+            //リーチ目、有効ラインなどで得点を決める
+            //将来的な4リールにも対応させたいから、3はイカんよなぁ！？      
+            const MaxSlip = 4;
+            return this.controls.map((control) => {
+                //どの順番で定義していくかを決定する。
+                console.log(control.name + ':開始')
+                let orderTmp = [...Array(this.reels.length).keys()];
+                let orders = Combinatorics.permutation(orderTmp).toArray();
+                return orders.map((order) => {
+                    let stopTmp = [];
+                    console.log(`押し順[${order.toString()}]開始`)
+                    let fn = (order) => {
+                        let stopNum = order[0];
+                        let slipResults = [];
+                        for (let stopPos = 0; stopPos < this.reels[stopNum].length; stopPos++) {
+                            let slipPoints = [];
+                            for (let s = 0; s <= MaxSlip; s++) {
+                                stopTmp[stopNum] = (stopPos - s + this.reels[stopNum].length) % this.reels[stopNum].length
+                                let p;
+                                if (order.length === 1) {
+                                    p = {
+                                        value: this.evalSymbols(stopTmp, control),
+                                        slip: s,
+                                        tree: null
+                                    }
+                                    if (p.value === null) continue
+                                } else {
+                                    let arr = fn(order.slice(1));
+                                    if (arr === null) {
+                                        //NG
+                                        continue
+                                    }
+                                    let sumValue = arr.reduce((a, b) => {
+                                        return {
+                                            value: a.value + b.value
+                                        }
+                                    });
+                                    p = {
+                                        value: sumValue.value,
+                                        slip: s,
+                                        tree: arr
+                                    }
+                                }
+                                slipPoints.push(p)
+                            }
+                            if (slipPoints.length === 0) return null;
+                            let maxPoint = slipPoints.reduce((a, b) => {
+                                return a.value >= b.value ? a : b;
+                            })
+                            slipResults.push(maxPoint);
+                        }
+                        return slipResults
+                    }
+                    return fn(order);
+                })
+            })
+        }
+        evalSymbols(positions, control) {
+
+            let { mode, bet } = control;
+
+            let lines = this.betLines[bet - 1];
+            let hitLines = this.pickUpLine(positions, lines).map(line => this.checkHit(line))
+            let hitCount = 0;
+            let chips = control.symbols.map(s => this.nameToChips(s.name)).flat();
+            // console.log(hitLines)
+            if (hitLines.every((arr) => {
+                    return arr.every(s => {
+                        return chips.includes(s)
+                    })
+                })) {
+                return hitCount;
+            } else {
+                return null;
+            }
+        }
+        checkHit(line) {
+            return this.symbols.filter(s => {
+                return s.chips.every((c, i) => {
+                    if (!c) return true;
+                    return this.nameToChips(c).find(c2 => c2 === line[i]);
+                })
+            })
+        }
+        pickUpLine(positions, lines) {
+            let chipMatrix = positions.map((pos, i) => {
+                let arr = [];
+                for (let k = 0; k < this.displayRange[i]; k++) {
+                    let n = (pos + k) % this.reels[i].length;
+                    arr.push(this.reels[i].chips[n])
+                }
+                return arr;
+            })
+            return lines.map(line => {
+                return line.map((p, i) => chipMatrix[i][p]);
+            })
+        }
+        nameToChips(name) {
+            let obj = this.chipGroups.find(g => g.name === name) || this.chips.find(g => g.name === name);
+            if (obj instanceof SlotControlMaker.ChipGroup) {
+                return obj.chips
+            }
+            if (obj instanceof SlotControlMaker.Chip) {
+                return [obj]
+            }
+            throw `Chip name Error ${name}`;
+        }
+
     },
     //制御コードに対応する
-    Control: class {},
+    Control: class {
+        constructor(name, symbols = [], lines = [], specialSymbols = [], mode = null, bet = 3) {
+            this.name = name;
+            this.symbols = symbols;
+            this.lines = lines;
+            this.specialSymbols = specialSymbols;
+            this.mode = mode;
+            this.bet = bet
+        }
+    },
     Chip: class {
         constructor(name) {
             this.name = name;
@@ -39,6 +162,7 @@ const SlotControlMaker = {
     Reel: class {
         constructor(chips) {
             this.chips = chips;
+            this.length = chips.length
         }
     },
     ChipGroup: class {
@@ -48,9 +172,10 @@ const SlotControlMaker = {
         }
     },
     Symbol: class {
-        constructor(name, chips) {
+        constructor(name, chips, activeModes) {
             this.name = name;
             this.chips = chips;
+            this.activeModes
         }
     },
     Mode: class {
@@ -67,15 +192,25 @@ const SlotControlMaker = {
 }
 
 //イメージコード
-
+const Lines = {
+    中段: [1, 1, 1],
+    上段: [0, 0, 0],
+    下段: [2, 2, 2],
+    右下がり: [0, 1, 2],
+    右上がり: [2, 1, 0]
+}
 let machine = new SlotControlMaker.Machine([
-    [1, 1, 1]
+    Lines.中段
 ], [
-    [0, 0, 0],
-    [2, 2, 2]
+    Lines.中段,
+    Lines.上段,
+    Lines.下段
 ], [
-    [0, 1, 2],
-    [2, 1, 0]
+    Lines.中段,
+    Lines.上段,
+    Lines.下段,
+    Lines.右上がり,
+    Lines.右下がり
 ]);
 
 const Chips = [
@@ -185,3 +320,18 @@ const SpecialSymbols = [
 ]
 
 machine.setSpecialSymbols(SpecialSymbols);
+
+const Controls = [
+    new SlotControlMaker.Control('はずれ'),
+    // new SlotControlMaker.Control('リプレイ', ['リプレイ'], [Lines.上段, Lines.下段, Lines.中段, Lines.右上がり, Lines.右下がり], ['小役ハズレ']),
+    // new SlotControlMaker.Control('ベル', ['ベル'], [Lines.上段, Lines.下段, Lines.中段, Lines.右上がり, Lines.右下がり], ['小役ハズレ']),
+    // new SlotControlMaker.Control('スイカ', ['スイカ'], [Lines.上段, Lines.下段, Lines.中段, Lines.右上がり, Lines.右下がり], ['小役ハズレ']),
+    // new SlotControlMaker.Control('チェリー', ['チェリー'], [Lines.上段, Lines.下段, Lines.右上がり, Lines.右下がり], ['小役ハズレ']),
+    // new SlotControlMaker.Control('BIG', ['赤7', '青7'], [Lines.上段, Lines.下段, Lines.中段, Lines.右上がり, Lines.右下がり], ['小役ハズレ', 'リーチ目', 'BIG確定']),
+    // new SlotControlMaker.Control('REG', ['赤BAR', '青7'], [Lines.上段, Lines.下段, Lines.中段, Lines.右上がり, Lines.右下がり], ['小役ハズレ', 'リーチ目']),
+]
+
+machine.setControls(Controls);
+
+let Result = machine.generate();
+console.log(Result);
